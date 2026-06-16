@@ -1,36 +1,123 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Ngebeng Payment Webhook
 
-## Getting Started
+Sistem webhook payment untuk Midtrans yang melayani multiple aplikasi (apk1, apk2, apk3).
 
-First, run the development server:
+## Arsitektur
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+```
+Midtrans → POST /api/webhook/midtrans → Webhook Service → PostgreSQL
+                                                          ↓
+Apps (Pull API) ← GET /api/transactions ← Webhook Service
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## API Endpoints
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 1. Register Aplikasi
+```bash
+POST /api/apps/register
+Body: { "name": "Aplikasi 1", "appCode": "APK1" }
+```
+Response: `{ id, name, appCode, apiKey, isActive }`
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### 2. Webhook Midtrans (PUBLIC)
+```bash
+POST /api/midtrans/webhook
+```
+Endpoint ini didaftarkan di dashboard Midtrans. Menerima notifikasi pembayaran.
+URL: `https://bangparjo.shop/api/midtrans/webhook`
 
-## Learn More
+### 3. Cek Transaksi (PROTECTED - perlu API Key)
+```bash
+GET /api/transactions?order_id=APK1_10001
+Headers: X-API-Key: <api_key>
+```
 
-To learn more about Next.js, take a look at the following resources:
+### 4. Health Check
+```bash
+GET /api/health
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Format Order ID
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```
+{appCode}_{nomor_unik}
+Contoh: APK1_20260612_0001, APK2_10001
+```
 
-## Deploy on Vercel
+## Cara Penggunaan
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### 1. Setup Database
+```bash
+# Jalankan PostgreSQL (via Docker)
+docker compose up -d postgres
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+# Atau gunakan PostgreSQL yang sudah ada
+# Update DATABASE_URL di .env
+
+# Migrate database
+npm run db:push
+
+# Seed data (buat 3 aplikasi default)
+npm run db:seed
+```
+
+### 2. Jalankan Development
+```bash
+npm run dev
+```
+
+### 3. Daftarkan Aplikasi
+```bash
+curl -X POST http://localhost:3000/api/apps/register \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Aplikasi 1", "appCode": "APK1"}'
+```
+
+### 4. Daftarkan Webhook di Midtrans
+- Buka dashboard Midtrans (Sandbox)
+- Masuk ke Settings → Notification
+- Set Payment Notification URL: `https://domain-anda.com/api/webhook/midtrans`
+- Set Finish/Unfinish/Error Redirect URL sesuai kebutuhan
+
+### 5. Apps Cek Status Transaksi
+```bash
+curl http://localhost:3000/api/transactions?order_id=APK1_10001 \
+  -H "X-API-Key: <api_key_dari_registrasi>"
+```
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `DATABASE_URL` | PostgreSQL connection string |
+| `MIDTRANS_SERVER_KEY` | Midtrans Server Key (sandbox/production) |
+| `MIDTRANS_CLIENT_KEY` | Midtrans Client Key |
+| `MIDTRANS_MERCHANT_ID` | Midtrans Merchant ID |
+| `LOG_LEVEL` | Log level (info, debug, warn, error) |
+
+## Deployment (VPS)
+
+### Using Docker
+```bash
+# Set environment variables
+export MIDTRANS_SERVER_KEY="your-key"
+export MIDTRANS_CLIENT_KEY="your-key"
+export MIDTRANS_MERCHANT_ID="your-id"
+
+# Jalankan
+docker compose up -d
+```
+
+### Manual (tanpa Docker)
+```bash
+npm run build
+npm start
+```
+
+## Teknologi
+
+- **Framework**: Next.js 16 (App Router)
+- **Database**: PostgreSQL
+- **ORM**: Prisma 7
+- **Logger**: Pino
+- **Auth**: API Key via Proxy
