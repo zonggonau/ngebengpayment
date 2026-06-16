@@ -5,6 +5,7 @@ import type { NextRequest } from "next/server";
 const publicPaths = [
   "/api/midtrans/webhook",
   "/api/health",
+  "/api/cron/",
 ];
 
 // Paths that use cookie-based auth (dashboard), not API Key

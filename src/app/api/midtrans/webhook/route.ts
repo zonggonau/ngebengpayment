@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyMidtransSignature, getAppCodeFromOrderId } from "@/lib/midtrans";
 import type { MidtransNotification } from "@/lib/midtrans";
+import type { App } from "@/generated/prisma/client";
 import logger from "@/lib/logger";
 
 /**
@@ -41,7 +42,7 @@ export async function POST(request: NextRequest) {
       include: { app: true },
     });
 
-    let app;
+    let app: App;
 
     if (existingTransaction) {
       // Transaksi sudah ada, gunakan app dari transaksi tersebut
@@ -57,17 +58,19 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      app = await prisma.app.findUnique({
+      const foundApp = await prisma.app.findUnique({
         where: { appCode: appCode },
       });
 
-      if (!app) {
+      if (!foundApp) {
         logger.warn({ appCode, orderId: body.order_id }, "App not found");
         return NextResponse.json(
           { error: "App not found" },
           { status: 400 }
         );
       }
+
+      app = foundApp;
     }
 
     if (!app.isActive) {
@@ -156,11 +159,19 @@ export async function POST(request: NextRequest) {
 
     // 7. Forward notification to app's webhook URL (if configured)
     if (app.webhookUrl) {
-      // Payload sederhana: hanya order_id dan transaction_status
-      // Untuk detail lengkap, aplikasi bisa panggil GET /api/transactions?order_id=xxx
+      // Payload lengkap dengan semua informasi transaksi
       const payload = {
+        event: "payment.update",
         order_id: transaction.orderId,
         transaction_status: transaction.transactionStatus,
+        payment_type: transaction.paymentType,
+        gross_amount: transaction.grossAmount.toString(),
+        transaction_time: transaction.transactionTime?.toISOString(),
+        settlement_time: transaction.settlementTime?.toISOString(),
+        fraud_status: transaction.fraudStatus,
+        bank: transaction.bank,
+        va_number: transaction.vaNumber,
+        signature_key: transaction.signatureKey,
       };
 
       logger.info(
@@ -168,39 +179,62 @@ export async function POST(request: NextRequest) {
         "Forwarding notification to app webhook"
       );
 
-      // Fire and forget - jangan block response
-      fetch(app.webhookUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-API-Key": app.apiKey,
-          "User-Agent": "NgebengPayment-Webhook/1.0",
-        },
-        body: JSON.stringify(payload),
-      })
-        .then((res) => {
-          if (!res.ok) {
+      // Kirim notifikasi dengan retry mechanism
+      const maxRetries = 3;
+      const retryDelay = 2000; // 2 detik
+
+      async function sendWebhook(attempt: number): Promise<boolean> {
+        try {
+          const res = await fetch(app.webhookUrl!, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-API-Key": app.apiKey,
+              "X-Webhook-Event": "payment.update",
+              "User-Agent": "NgebengPayment-Webhook/1.0",
+            },
+            body: JSON.stringify(payload),
+          });
+
+          if (res.ok) {
+            logger.info(
+              { orderId: body.order_id, webhookUrl: app.webhookUrl },
+              "App webhook forwarded successfully"
+            );
+            return true;
+          } else {
+            const errorText = await res.text();
             logger.warn(
               {
                 orderId: body.order_id,
                 webhookUrl: app.webhookUrl,
                 statusCode: res.status,
+                response: errorText,
+                attempt,
               },
               "App webhook responded with error"
             );
-          } else {
-            logger.info(
-              { orderId: body.order_id, webhookUrl: app.webhookUrl },
-              "App webhook forwarded successfully"
-            );
+            return false;
           }
-        })
-        .catch((error) => {
+        } catch (error) {
           logger.error(
-            { orderId: body.order_id, webhookUrl: app.webhookUrl, error },
+            { orderId: body.order_id, webhookUrl: app.webhookUrl, error, attempt },
             "Failed to forward notification to app webhook"
           );
-        });
+          return false;
+        }
+      }
+
+      // Jalankan pengiriman dengan retry
+      (async () => {
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          const success = await sendWebhook(attempt);
+          if (success) break;
+          if (attempt < maxRetries) {
+            await new Promise((r) => setTimeout(r, retryDelay));
+          }
+        }
+      })();
     }
 
     logger.info({ orderId: body.order_id }, "Transaction processed successfully");
