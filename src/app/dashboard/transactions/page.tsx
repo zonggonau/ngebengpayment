@@ -51,7 +51,14 @@ export default function TransactionsPage() {
         setLoading(false);
       }
     }
+
+    // Fetch immediately
     fetchTransactions();
+
+    // Auto-refresh every 5 seconds untuk update status real-time
+    const interval = setInterval(fetchTransactions, 5000);
+
+    return () => clearInterval(interval);
   }, []);
 
   const filtered = transactions.filter(

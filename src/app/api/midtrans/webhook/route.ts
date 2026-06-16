@@ -34,31 +34,44 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 2. Get app code from order_id
-    const appCode = getAppCodeFromOrderId(body.order_id);
-    if (!appCode) {
-      logger.warn({ orderId: body.order_id }, "Invalid order_id format");
-      return NextResponse.json(
-        { error: "Invalid order_id format" },
-        { status: 400 }
-      );
-    }
-
-    // 3. Find app by app_code
-    const app = await prisma.app.findUnique({
-      where: { appCode: appCode },
+    // 2. Cari transaksi yang sudah ada di database berdasarkan order_id
+    //    (transaksi sudah dibuat sebelumnya oleh POST /api/transactions)
+    const existingTransaction = await prisma.transaction.findUnique({
+      where: { orderId: body.order_id },
+      include: { app: true },
     });
 
-    if (!app) {
-      logger.warn({ appCode, orderId: body.order_id }, "App not found");
-      return NextResponse.json(
-        { error: "App not found" },
-        { status: 400 }
-      );
+    let app;
+
+    if (existingTransaction) {
+      // Transaksi sudah ada, gunakan app dari transaksi tersebut
+      app = existingTransaction.app;
+    } else {
+      // Fallback: coba extract app code dari order_id (format lama: APPCODE_xxx)
+      const appCode = getAppCodeFromOrderId(body.order_id);
+      if (!appCode) {
+        logger.warn({ orderId: body.order_id }, "Transaction not found and invalid order_id format");
+        return NextResponse.json(
+          { error: "Transaction not found" },
+          { status: 404 }
+        );
+      }
+
+      app = await prisma.app.findUnique({
+        where: { appCode: appCode },
+      });
+
+      if (!app) {
+        logger.warn({ appCode, orderId: body.order_id }, "App not found");
+        return NextResponse.json(
+          { error: "App not found" },
+          { status: 400 }
+        );
+      }
     }
 
     if (!app.isActive) {
-      logger.warn({ appCode, orderId: body.order_id }, "App is inactive");
+      logger.warn({ appCode: app.appCode, orderId: body.order_id }, "App is inactive");
       return NextResponse.json(
         { error: "App is inactive" },
         { status: 400 }
@@ -72,10 +85,6 @@ export async function POST(request: NextRequest) {
     }
 
     // 5. Upsert transaction
-    const existingTransaction = await prisma.transaction.findUnique({
-      where: { orderId: body.order_id },
-    });
-
     const previousStatus = existingTransaction?.transactionStatus ?? null;
 
     const transaction = await prisma.transaction.upsert({
