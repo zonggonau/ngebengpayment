@@ -16,6 +16,130 @@ import logger from "@/lib/logger";
  * Headers:
  * - X-API-Key: API Key aplikasi
  */
+/**
+ * POST /api/transactions
+ * Membuat transaksi baru (Snap Redirect) untuk aplikasi klien
+ *
+ * Body (JSON):
+ * - order_id: string (required) - ID unik pesanan dari aplikasi
+ * - gross_amount: number (required) - Jumlah pembayaran
+ * - customer_details: object (optional) - Detail pelanggan
+ *   - first_name: string
+ *   - last_name: string
+ *   - email: string
+ *   - phone: string
+ *
+ * Headers:
+ * - X-API-Key: API Key aplikasi
+ */
+export async function POST(request: NextRequest) {
+  try {
+    // Validate API Key
+    const auth = await getAuthenticatedApp(request);
+    if ("error" in auth) {
+      return auth.error;
+    }
+    const app = auth.app;
+
+    // Parse request body
+    const body = await request.json();
+    const { order_id, gross_amount, customer_details } = body;
+
+    // Validate required fields
+    if (!order_id || !gross_amount) {
+      return NextResponse.json(
+        { error: "order_id and gross_amount are required" },
+        { status: 400 }
+      );
+    }
+
+    // Check for duplicate order_id
+    const existing = await prisma.transaction.findUnique({
+      where: { orderId: order_id },
+    });
+
+    if (existing) {
+      return NextResponse.json(
+        { error: "order_id already exists" },
+        { status: 409 }
+      );
+    }
+
+    // Generate Snap Redirect URL via Midtrans
+    const midtransResponse = await fetch(
+      `${process.env.MIDTRANS_API_URL}/snap/v1/transactions`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          Authorization: `Basic ${Buffer.from(
+            process.env.MIDTRANS_SERVER_KEY + ":"
+          ).toString("base64")}`,
+        },
+        body: JSON.stringify({
+          transaction_details: {
+            order_id,
+            gross_amount,
+          },
+          customer_details: customer_details || {
+            first_name: "Customer",
+            email: "customer@example.com",
+          },
+          credit_card: {
+            secure: true,
+          },
+        }),
+      }
+    );
+
+    const midtransData = await midtransResponse.json();
+
+    if (!midtransResponse.ok) {
+      logger.error(
+        { midtransError: midtransData, order_id },
+        "Midtrans transaction creation failed"
+      );
+      return NextResponse.json(
+        { error: "Failed to create transaction", details: midtransData },
+        { status: 502 }
+      );
+    }
+
+    // Save transaction to database
+    const transaction = await prisma.transaction.create({
+      data: {
+        orderId: order_id,
+        appId: app.id,
+        grossAmount: gross_amount,
+        transactionStatus: "pending",
+        transactionTime: new Date(),
+      },
+    });
+
+    logger.info(
+      { order_id, appCode: app.appCode, transactionId: transaction.id },
+      "Transaction created"
+    );
+
+    return NextResponse.json({
+      success: true,
+      transaction: {
+        id: transaction.id,
+        order_id: transaction.orderId,
+        redirect_url: midtransData.redirect_url,
+        token: midtransData.token,
+      },
+    });
+  } catch (error) {
+    logger.error({ error }, "Error creating transaction");
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
+  }
+}
+
 export async function GET(request: NextRequest) {
   try {
     // Validate API Key
