@@ -65,31 +65,41 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Determine Midtrans API URL (sandbox vs production based on server key prefix)
+    const isSandbox = process.env.MIDTRANS_SERVER_KEY?.startsWith("SB-");
+    const midtransApiUrl = isSandbox
+      ? "https://app.sandbox.midtrans.com"
+      : "https://app.midtrans.com";
+
     // Generate Snap Redirect URL via Midtrans
+    const authString = Buffer.from(
+      process.env.MIDTRANS_SERVER_KEY + ":"
+    ).toString("base64");
+
+    const midtransPayload = {
+      transaction_details: {
+        order_id,
+        gross_amount,
+      },
+      customer_details: customer_details || {
+        first_name: "Customer",
+        email: "customer@example.com",
+      },
+      credit_card: {
+        secure: true,
+      },
+    };
+
     const midtransResponse = await fetch(
-      `${process.env.MIDTRANS_API_URL}/snap/v1/transactions`,
+      `${midtransApiUrl}/snap/v1/transactions`,
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Accept: "application/json",
-          Authorization: `Basic ${Buffer.from(
-            process.env.MIDTRANS_SERVER_KEY + ":"
-          ).toString("base64")}`,
+          Authorization: `Basic ${authString}`,
         },
-        body: JSON.stringify({
-          transaction_details: {
-            order_id,
-            gross_amount,
-          },
-          customer_details: customer_details || {
-            first_name: "Customer",
-            email: "customer@example.com",
-          },
-          credit_card: {
-            secure: true,
-          },
-        }),
+        body: JSON.stringify(midtransPayload),
       }
     );
 
@@ -97,7 +107,7 @@ export async function POST(request: NextRequest) {
 
     if (!midtransResponse.ok) {
       logger.error(
-        { midtransError: midtransData, order_id },
+        { midtransError: midtransData, order_id, status: midtransResponse.status },
         "Midtrans transaction creation failed"
       );
       return NextResponse.json(
@@ -114,6 +124,7 @@ export async function POST(request: NextRequest) {
         grossAmount: gross_amount,
         transactionStatus: "pending",
         transactionTime: new Date(),
+        rawResponse: midtransData,
       },
     });
 
