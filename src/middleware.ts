@@ -11,6 +11,7 @@ const publicPaths = [
 const cookieAuthPaths = [
   "/api/auth/",
   "/api/dashboard/",
+  "/api/apps/",
 ];
 
 // Paths that are safe for CSRF (GET requests to dashboard)

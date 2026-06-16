@@ -7,6 +7,20 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
 
 interface App {
@@ -31,6 +45,9 @@ export default function AppsPage() {
   const [editingWebhook, setEditingWebhook] = useState<number | null>(null);
   const [editWebhookUrl, setEditWebhookUrl] = useState("");
   const [savingWebhook, setSavingWebhook] = useState(false);
+  const [deleteDialog, setDeleteDialog] = useState<{ id: number; name: string } | null>(null);
+  const [deleteConfirmName, setDeleteConfirmName] = useState("");
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     fetchApps();
@@ -186,15 +203,42 @@ export default function AppsPage() {
                         <h3 className="font-semibold text-lg">{app.name}</h3>
                         <p className="text-sm text-gray-500">{app.appCode}</p>
                       </div>
-                      <Badge
-                        className={
-                          app.isActive
-                            ? "bg-green-100 text-green-800"
-                            : "bg-red-100 text-red-800"
-                        }
-                      >
-                        {app.isActive ? "Active" : "Inactive"}
-                      </Badge>
+                      <div className="flex items-center gap-1">
+                        <Badge
+                          className={
+                            app.isActive
+                              ? "bg-green-100 text-green-800"
+                              : "bg-red-100 text-red-800"
+                          }
+                        >
+                          {app.isActive ? "Active" : "Inactive"}
+                        </Badge>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger className="p-1 rounded-md hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors data-open:bg-gray-100" title="More actions">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <circle cx="12" cy="5" r="1"/>
+                              <circle cx="12" cy="12" r="1"/>
+                              <circle cx="12" cy="19" r="1"/>
+                            </svg>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-36">
+                            <DropdownMenuItem
+                              variant="destructive"
+                              onClick={() => {
+                                setDeleteDialog({ id: app.id, name: app.name });
+                                setDeleteConfirmName("");
+                              }}
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M3 6h18"/>
+                                <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>
+                                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
+                              </svg>
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
                     </div>
                     <div className="space-y-2 text-sm">
                       <div>
@@ -326,6 +370,83 @@ export default function AppsPage() {
               ))}
         </div>
       </div>
+
+      {/* Delete Confirmation Modal */}
+      <Dialog
+        open={deleteDialog !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteDialog(null);
+            setDeleteConfirmName("");
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="text-red-600">Delete Application</DialogTitle>
+            <DialogDescription>
+              This action <strong>cannot be undone</strong>. This will permanently delete
+              the app <strong>"{deleteDialog?.name}"</strong> and all its transactions.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <p className="text-sm text-gray-600">
+              Please type <strong className="text-gray-900">{deleteDialog?.name}</strong> to confirm:
+            </p>
+            <Input
+              placeholder={deleteDialog?.name || ""}
+              value={deleteConfirmName}
+              onChange={(e) => setDeleteConfirmName(e.target.value)}
+              className={
+                deleteConfirmName && deleteConfirmName !== deleteDialog?.name
+                  ? "border-red-400 focus-visible:ring-red-400"
+                  : ""
+              }
+            />
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDeleteDialog(null);
+                setDeleteConfirmName("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={deleteConfirmName !== deleteDialog?.name || deleting}
+              onClick={async () => {
+                if (!deleteDialog) return;
+                setDeleting(true);
+                try {
+                  const res = await fetch(`/api/apps/${deleteDialog.id}`, {
+                    method: "DELETE",
+                  });
+                  if (res.ok) {
+                    toast.success(`"${deleteDialog.name}" deleted successfully`);
+                    setDeleteDialog(null);
+                    setDeleteConfirmName("");
+                    fetchApps();
+                  } else {
+                    const data = await res.json();
+                    toast.error(data.error || "Failed to delete app");
+                  }
+                } catch {
+                  toast.error("Connection error");
+                } finally {
+                  setDeleting(false);
+                }
+              }}
+            >
+              {deleting ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 }
